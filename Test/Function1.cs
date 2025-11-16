@@ -1,6 +1,6 @@
-﻿using System.Net;
 using System.Text.Json;
 using Microsoft.Azure.Functions.Worker;
+using Microsoft.Azure.Functions.Worker.Extensions.SignalRService;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Extensions.Logging;
 
@@ -18,24 +18,28 @@ public class Function1
     // SignalR Trigger - receives messages from slv_hub and forwards to output_hub
     [Function("SignalRTrigger")]
     [SignalROutput(HubName = "output_hub", ConnectionStringSetting = "AzureSignalRConnectionString")]
-    public SignalRMessageAction Run(
+    public IEnumerable<SignalRMessageAction> Run(
         [SignalRTrigger(
-            "slv_hub",
-            "messages",
-            "ReceiveRfid",
+            hubName: "slv_hub",
+            category: "messages",
+            @event: "ReceiveRfid",
             ConnectionStringSetting = "AzureSignalRConnectionString")]
+        SignalRInvocationContext invocationContext,
         string message,
         FunctionContext context)
     {
         var logger = context.GetLogger("SignalRTrigger");
 
         logger.LogInformation("=== SIGNALR TRIGGER FIRED ===");
-        logger.LogInformation($"Received: {message}");
+        logger.LogInformation(
+            "Invocation from hub {HubName} with event {EventName} and connection {ConnectionId}",
+            invocationContext.Hub, invocationContext.Event, invocationContext.ConnectionId);
+        logger.LogInformation("Received payload: {Payload}", message);
 
         if (string.IsNullOrEmpty(message))
         {
             logger.LogWarning("Empty message received");
-            return null;
+            return Array.Empty<SignalRMessageAction>();
         }
 
         try
@@ -43,17 +47,23 @@ public class Function1
             // Parse the RFID message
             var rfidData = JsonSerializer.Deserialize<RfidMessage>(message);
 
-            logger.LogInformation($"CarteSlv: {rfidData?.carteSlv}, Device: {rfidData?.deviceName}");
+            logger.LogInformation(
+                "CarteSlv: {CarteSlv}, Device: {Device}",
+                rfidData?.carteSlv,
+                rfidData?.deviceName);
 
             // Forward to output_hub
-            return new SignalRMessageAction("ReceiveRfid")
+            return new[]
             {
-                Arguments = new[] { message }
+                new SignalRMessageAction("ReceiveRfid")
+                {
+                    Arguments = new[] { message }
+                }
             };
         }
         catch (Exception ex)
         {
-            logger.LogError($"Error: {ex.Message}");
+            logger.LogError(ex, "Error forwarding message to SignalR");
             throw;
         }
     }
@@ -62,8 +72,8 @@ public class Function1
 // RFID message model
 public class RfidMessage
 {
-    public string carteSlv { get; set; }
-    public string deviceId { get; set; }
-    public string deviceName { get; set; }
-    public string tsUtc { get; set; }
+    public string? carteSlv { get; set; }
+    public string? deviceId { get; set; }
+    public string? deviceName { get; set; }
+    public string? tsUtc { get; set; }
 }
